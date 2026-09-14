@@ -13,3 +13,10 @@ PROVISIONING_PROFILE_SPECIFIER =
 
 // Add LOCAL_BUILD compilation flag so Swift code can use #if LOCAL_BUILD
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) LOCAL_BUILD
+
+// Ad-hoc local override for Eme's established GPL installation and permissions: keep the historical app identity.
+// Upstream changes to product naming, bundle identity, or local-build storage may make this stale; revalidate the
+// installed bundle id, Application Support path, Accessibility permission, and launch behavior before rebasing.
+PRODUCT_BUNDLE_IDENTIFIER = com.prakashjoshipax.VoiceInk.GPL
+PRODUCT_NAME = VoiceInk-GPL
+INFOPLIST_KEY_CFBundleDisplayName = VoiceInk-GPL

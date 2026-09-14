@@ -214,8 +214,15 @@ struct VoiceInkApp: App {
     }
 
     private static func createPersistentContainer(schema: Schema, logger: Logger) throws -> ModelContainer {
+        // Ad-hoc local override for Eme's existing VoiceInk-GPL data. Upstream currently hard-codes the production
+        // support directory; if its storage migration or bundle layout changes, revalidate all three stores and
+        // their WAL files before updating. Production keeps its existing path, while the GPL fork keeps its own.
+        let supportDirectoryName =
+            Bundle.main.bundleIdentifier == "com.prakashjoshipax.VoiceInk.GPL"
+            ? "com.prakashjoshipax.VoiceInk.GPL"
+            : "com.prakashjoshipax.VoiceInk"
         let appSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.prakashjoshipax.VoiceInk", isDirectory: true)
+            .appendingPathComponent(supportDirectoryName, isDirectory: true)
 
         try? FileManager.default.createDirectory(at: appSupportURL, withIntermediateDirectories: true)
 

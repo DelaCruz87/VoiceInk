@@ -3,6 +3,15 @@ import Carbon
 import Foundation
 import os
 
+enum TranscriptPasteFormatter {
+    // Ad-hoc local override for Eme's agent-facing dictation workflow: every pasted transcript starts with a
+    // minimal context label. Upstream changes to paste routing or transcript semantics may make this stale;
+    // revalidate all CursorPaster entry points and the exact "Transcript\n\n" output before rebasing or updating.
+    static func format(_ text: String) -> String {
+        "Transcript\n\n\(text)"
+    }
+}
+
 class CursorPaster {
     private typealias ClipboardItemSnapshot = [(NSPasteboard.PasteboardType, Data)]
     private typealias ClipboardSnapshot = [ClipboardItemSnapshot]
@@ -49,10 +58,11 @@ class CursorPaster {
         let shouldRestoreClipboard = UserDefaults.standard.bool(forKey: "restoreClipboardAfterPaste")
         let savedContents = shouldRestoreClipboard ? snapshotClipboard(from: pasteboard) : []
         let sessionID = UUID().uuidString
+        let pasteText = TranscriptPasteFormatter.format(text)
 
         guard
             ClipboardManager.setClipboard(
-                text,
+                pasteText,
                 transient: shouldRestoreClipboard,
                 sessionID: shouldRestoreClipboard ? sessionID : nil
             )
@@ -67,7 +77,7 @@ class CursorPaster {
         if shouldRestoreClipboard {
             scheduleClipboardRestore(
                 savedContents,
-                expectedText: text,
+                expectedText: pasteText,
                 sessionID: sessionID,
                 on: pasteboard
             )

@@ -25,7 +25,9 @@ final class KeychainService {
 
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "KeychainService")
     #if LOCAL_BUILD
-        private let service = "com.prakashjoshipax.VoiceInk.Local"
+        // Ad-hoc local override for Eme's stable GPL bundle identity. If upstream changes its credential schema,
+        // account names, or signing model, revalidate custom providers and trial/license reads before rebasing.
+        private let service = Bundle.main.bundleIdentifier ?? "com.prakashjoshipax.VoiceInk.GPL"
         private let defaults = UserDefaults.standard
         private let legacyLocalPrefix = "LocalKeychain_"
     #else
