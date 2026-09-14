@@ -18,5 +18,4 @@ SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) LOCAL_BUILD
 // Upstream changes to product naming, bundle identity, or local-build storage may make this stale; revalidate the
 // installed bundle id, Application Support path, Accessibility permission, and launch behavior before rebasing.
 PRODUCT_BUNDLE_IDENTIFIER = com.prakashjoshipax.VoiceInk.GPL
-PRODUCT_NAME = VoiceInk-GPL
 INFOPLIST_KEY_CFBundleDisplayName = VoiceInk-GPL
