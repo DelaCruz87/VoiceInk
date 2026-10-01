@@ -46,13 +46,14 @@ final class DashboardStatsSnapshotStore: @unchecked Sendable {
     private init(fileManager: FileManager = .default, userDefaults: UserDefaults = .standard) {
         self.fileManager = fileManager
         self.userDefaults = userDefaults
-        let appSupportRoot =
-            fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        // ENSO ad-hoc local override: dashboard snapshots must follow the same production or
+        // CompanionTest root as SwiftData and recordings. Upstream snapshot/storage changes can
+        // make this stale; revalidate read/write isolation before sandbox reuse/update.
+        let appSupportURL = (try? CompanionEnvironment.applicationSupportRoot(fileManager: fileManager))
+            ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+                .appendingPathComponent("com.prakashjoshipax.VoiceInk", isDirectory: true)
             ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent(
-                "Library/Application Support", isDirectory: true)
-        let appSupportURL =
-            appSupportRoot
-            .appendingPathComponent("com.prakashjoshipax.VoiceInk", isDirectory: true)
+                "Library/Application Support/com.prakashjoshipax.VoiceInk", isDirectory: true)
         self.snapshotURL = appSupportURL.appendingPathComponent("dashboard-stats-snapshot.json")
     }
 

@@ -28,6 +28,11 @@ struct VoiceInkApp: App {
     @State private var showMenuBarIcon = true
     @State private var didShowLaunchReminders = false
 
+    // ENSO ad-hoc local override: the approved Companion API is owned by the app lifecycle and uses
+    // the existing service instances. Revalidate if upstream changes App initialization order,
+    // service ownership, or ModelContainer creation before reuse/update.
+    private var companionController: CompanionController?
+
     // Audio cleanup manager for automatic deletion of old audio files
     private let audioCleanupManager = AudioCleanupManager.shared
 
@@ -106,8 +111,15 @@ struct VoiceInkApp: App {
         _enhancementService = StateObject(wrappedValue: enhancementService)
 
         // 1. Create modelsDirectory URL
-        let appSupportDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.prakashjoshipax.VoiceInk")
+        // ENSO ad-hoc local override: VOICEINK_COMPANION_DATA_DIR isolates model assets together with
+        // native stores in test launches. Without the variable, retain upstream's model directory.
+        // Revalidate if upstream changes model storage or sandbox conventions before reuse/update.
+        let appSupportDirectory =
+            (ProcessInfo.processInfo.environment[CompanionEnvironment.dataDirectoryVariable]?.isEmpty == false
+                ? try? CompanionEnvironment.applicationSupportRoot()
+                : nil)
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("com.prakashjoshipax.VoiceInk")
         let modelsDirectory = appSupportDirectory.appendingPathComponent("WhisperModels")
 
         // 2. Create model managers
@@ -167,12 +179,41 @@ struct VoiceInkApp: App {
 
         appDelegate.menuBarManager = menuBarManager
 
+        do {
+            // ENSO ad-hoc local override: an explicitly isolated CompanionTest bundle may seed a
+            // deterministic SwiftData/audio fixture for E2E checks without recording or ASR.
+            // Revalidate fixture identity and storage containment after schema/lifecycle changes.
+            try CompanionFixtureSeeder.seedIfRequested(
+                modelContext: resolvedContainer.mainContext,
+                transcriptionModelManager: transcriptionModelManager,
+                aiService: aiService
+            )
+            let controller = try CompanionController(
+                modelContext: resolvedContainer.mainContext,
+                engine: engine,
+                transcriptionModelManager: transcriptionModelManager,
+                whisperModelManager: whisperModelManager,
+                fluidAudioModelManager: fluidAudioModelManager,
+                aiService: aiService,
+                enhancementService: enhancementService
+            )
+            controller.start()
+            companionController = controller
+        } catch {
+            logger.error("Companion API did not start: \(error.localizedDescription, privacy: .public)")
+        }
+
         // Ensure no lingering recording state from previous runs
         Task {
             await recorderUIManager.resetOnLaunch()
         }
 
-        AppShortcuts.updateAppShortcutParameters()
+        // ENSO ad-hoc local override: isolated CompanionTest processes must not publish recorder
+        // App Shortcuts while a user's production VoiceInk is active. If AppIntents lifecycle or
+        // bundle isolation changes upstream, revalidate that test launches cannot start recording.
+        if Bundle.main.bundleIdentifier?.hasSuffix(".CompanionTest") != true {
+            AppShortcuts.updateAppShortcutParameters()
+        }
 
         let statsMigrationTask = SessionMetricMigrationService.shared.runStatsMigrationIfNeeded(
             modelContainer: resolvedContainer)
@@ -217,12 +258,10 @@ struct VoiceInkApp: App {
         // Ad-hoc local override for Eme's existing VoiceInk-GPL data. Upstream currently hard-codes the production
         // support directory; if its storage migration or bundle layout changes, revalidate all three stores and
         // their WAL files before updating. Production keeps its existing path, while the GPL fork keeps its own.
-        let supportDirectoryName =
-            Bundle.main.bundleIdentifier == "com.prakashjoshipax.VoiceInk.GPL"
-            ? "com.prakashjoshipax.VoiceInk.GPL"
-            : "com.prakashjoshipax.VoiceInk"
-        let appSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(supportDirectoryName, isDirectory: true)
+        // ENSO ad-hoc local override: VOICEINK_COMPANION_DATA_DIR redirects every SwiftData store for
+        // isolated API verification and disables CloudKit below. Default resolution preserves the
+        // bundle-specific production/GPL support path. Revalidate after upstream store migrations.
+        let appSupportURL = try CompanionEnvironment.applicationSupportRoot()
 
         try? FileManager.default.createDirectory(at: appSupportURL, withIntermediateDirectories: true)
 
@@ -240,6 +279,24 @@ struct VoiceInkApp: App {
 
         let dictionarySchema = Schema([VocabularyWord.self, WordReplacement.self])
         // Dev shares the local stores but must never connect to CloudKit.
+        if ProcessInfo.processInfo.environment[CompanionEnvironment.dataDirectoryVariable]?.isEmpty == false {
+            let dictionaryCloudKit: ModelConfiguration.CloudKitDatabase = .none
+            let dictionaryConfig = ModelConfiguration(
+                "dictionary",
+                schema: dictionarySchema,
+                url: dictionaryStoreURL,
+                cloudKitDatabase: dictionaryCloudKit
+            )
+            let statsSchema = Schema([SessionMetric.self])
+            let statsConfig = ModelConfiguration(
+                "stats",
+                schema: statsSchema,
+                url: statsStoreURL,
+                cloudKitDatabase: .none
+            )
+            return try ModelContainer(for: schema, configurations: transcriptConfig, dictionaryConfig, statsConfig)
+        }
+
         #if DEBUG || LOCAL_BUILD
             let dictionaryCloudKit: ModelConfiguration.CloudKitDatabase = .none
         #else

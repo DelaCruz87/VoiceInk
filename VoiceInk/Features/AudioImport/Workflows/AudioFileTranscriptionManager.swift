@@ -155,11 +155,10 @@ class AudioTranscriptionManager: ObservableObject {
             let audioAsset = AVURLAsset(url: item.url)
             let duration = CMTimeGetSeconds(try await audioAsset.load(.duration))
 
-            let recordingsDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[
-                0
-            ]
-            .appendingPathComponent("com.prakashjoshipax.VoiceInk")
-            .appendingPathComponent("Recordings")
+            // ENSO ad-hoc local override: imported-audio results follow the Companion sandbox data
+            // root when configured. Upstream storage changes can make this stale; revalidate the
+            // production/GPL default, security-scoped input, and cleanup roots before reuse/update.
+            let recordingsDirectory = try CompanionEnvironment.recordingsDirectory()
 
             let fileName = "transcribed_\(UUID().uuidString).wav"
             let permanentURL = recordingsDirectory.appendingPathComponent(fileName)

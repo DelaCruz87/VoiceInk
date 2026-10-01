@@ -34,6 +34,10 @@ class RecordingShortcutManager: ObservableObject {
     private var recorderPanelShortcutManager: RecorderPanelShortcutManager
     private let modeShortcutManager: ModeShortcutManager
     private let shortcutMonitor = ShortcutMonitor()
+    // ENSO ad-hoc local override: CompanionTest launches are API fixtures and must never react to
+    // the user's global input. It assumes the isolated bundle suffix contract; bundle/test harness
+    // changes can make this stale, so revalidate no event tap is installed before fixture reuse.
+    private let monitoringEnabled = Bundle.main.bundleIdentifier?.hasSuffix(".CompanionTest") != true
     private var shortcutChangeObserver: NSObjectProtocol?
     private let shortcutModeHandler: RecordingShortcutModeHandler
     private let primaryRecordingShortcutModeSource: RecordingShortcutModeSource
@@ -140,7 +144,7 @@ class RecordingShortcutManager: ObservableObject {
 
     private func refreshShortcutMonitoring() {
         removeAllMonitoring()
-
+        guard monitoringEnabled else { return }
         refreshShortcutMonitor()
     }
 

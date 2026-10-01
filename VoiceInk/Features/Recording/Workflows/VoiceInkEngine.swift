@@ -143,9 +143,14 @@ class VoiceInkEngine: NSObject, ObservableObject {
             self.assistantChat = nil
         }
 
-        let appSupportDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.prakashjoshipax.VoiceInk")
-        self.recordingsDirectory = appSupportDirectory.appendingPathComponent("Recordings")
+        // ENSO ad-hoc local override: Companion sandbox launches must keep generated audio under the
+        // same isolated root as SwiftData. Upstream storage layout changes can make this stale;
+        // revalidate production/GPL defaults and cleanup roots before reuse/update.
+        self.recordingsDirectory =
+            (try? CompanionEnvironment.recordingsDirectory())
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("com.prakashjoshipax.VoiceInk")
+                .appendingPathComponent("Recordings")
 
         self.serviceRegistry = TranscriptionServiceRegistry(
             modelProvider: whisperModelManager,

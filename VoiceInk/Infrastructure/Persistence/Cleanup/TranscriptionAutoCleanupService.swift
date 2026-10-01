@@ -10,9 +10,13 @@ final class TranscriptionAutoCleanupService {
     private var modelContext: ModelContext?
 
     private var recordingsDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.prakashjoshipax.VoiceInk")
-            .appendingPathComponent("Recordings")
+        // ENSO ad-hoc local override: orphan cleanup must use the same production or isolated root
+        // as recording creation. Upstream storage changes can make this stale; revalidate the root
+        // resolver and deletion containment before reuse/update.
+        (try? CompanionEnvironment.recordingsDirectory())
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("com.prakashjoshipax.VoiceInk")
+                .appendingPathComponent("Recordings")
     }
 
     private init() {}
