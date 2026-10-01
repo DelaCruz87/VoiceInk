@@ -1104,6 +1104,7 @@ final class CompanionAPIService {
             action("clearActiveMode", "Clear active mode"),
             action("selectAudioInputMode", "Select audio input mode", [arg("mode", "string", true, AudioInputMode.allCases.map(\.rawValue))]),
             action("selectMicrophone", "Select microphone", [arg("uid", "string")]),
+            action("refreshMicrophones", "Refresh microphones"),
             action("setShortcut", "Set shortcut", [arg("action", "string", true, shortcutOptions), arg("kind", "string", true, ["key", "modifierOnly", "mouseButton"]), arg("keyCode", "number"), arg("modifiers", "number")]),
             action("clearShortcut", "Clear shortcut", [arg("action", "string", true, shortcutOptions)]),
             action("beginShortcutCapture", "Record shortcut in VoiceInk", [arg("action", "string", true, shortcutOptions)]),
@@ -1474,6 +1475,9 @@ final class CompanionAPIService {
             }
             AudioDeviceManager.shared.selectDeviceAndSwitchToCustomMode(id: device.id)
             responseID = uid
+        case "refreshMicrophones":
+            AudioDeviceManager.shared.loadAvailableDevices()
+            try? await Task.sleep(for: .milliseconds(50))
         case "setShortcut":
             let actionID = try requiredString(request.args, "action", maximum: 200)
             guard let action = shortcutActions().first(where: { $0.0 == actionID })?.2 else {

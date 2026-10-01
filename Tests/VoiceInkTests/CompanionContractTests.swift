@@ -187,4 +187,26 @@ struct CompanionContractTests {
         #expect(effectiveModel == "local-fixture")
         #expect(queue.pending == nil)
     }
+
+    @Test
+    func refreshMicrophonesCapabilityHasNoSyntheticArguments() throws {
+        let descriptor = CompanionActionDescriptor(
+            name: "refreshMicrophones",
+            label: "Refresh microphones",
+            arguments: []
+        )
+        let capabilities = CompanionCapabilityResponse(
+            version: "1",
+            sections: ["Audio"],
+            actions: [descriptor.name],
+            actionDescriptors: [descriptor]
+        )
+        let decoded = try JSONDecoder().decode(
+            CompanionCapabilityResponse.self,
+            from: JSONEncoder().encode(capabilities)
+        )
+        #expect(decoded.actions == ["refreshMicrophones"])
+        #expect(decoded.actionDescriptors.first?.name == "refreshMicrophones")
+        #expect(decoded.actionDescriptors.first?.arguments.isEmpty == true)
+    }
 }
