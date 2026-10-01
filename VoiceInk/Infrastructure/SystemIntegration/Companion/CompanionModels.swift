@@ -8,6 +8,8 @@ enum CompanionJSONValue: Codable, Equatable, Sendable {
     case string(String)
     case bool(Bool)
     case number(Double)
+    case array([CompanionJSONValue])
+    case object([String: CompanionJSONValue])
     case null
 
     init(from decoder: Decoder) throws {
@@ -16,6 +18,8 @@ enum CompanionJSONValue: Codable, Equatable, Sendable {
         else if let value = try? container.decode(Bool.self) { self = .bool(value) }
         else if let value = try? container.decode(Double.self) { self = .number(value) }
         else if let value = try? container.decode(String.self) { self = .string(value) }
+        else if let value = try? container.decode([CompanionJSONValue].self) { self = .array(value) }
+        else if let value = try? container.decode([String: CompanionJSONValue].self) { self = .object(value) }
         else {
             throw DecodingError.typeMismatch(
                 CompanionJSONValue.self,
@@ -30,6 +34,8 @@ enum CompanionJSONValue: Codable, Equatable, Sendable {
         case .string(let value): try container.encode(value)
         case .bool(let value): try container.encode(value)
         case .number(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
+        case .object(let value): try container.encode(value)
         case .null: try container.encodeNil()
         }
     }
@@ -85,6 +91,19 @@ struct CompanionModelDescriptor: Codable {
     let downloading: Bool
     let downloadProgress: Double?
     let deletable: Bool
+    let displayName: String
+    let description: String
+    let languages: [String: String]
+    let multilingual: Bool
+    let streaming: Bool
+    let size: String?
+    let speed: Double?
+    let accuracy: Double?
+    let ramUsage: Double?
+    let publisher: String?
+    let custom: Bool
+    let keyConfigured: Bool
+    let verificationStatus: String?
 }
 
 struct CompanionModeDescriptor: Codable {
@@ -106,6 +125,13 @@ struct CompanionModeDescriptor: Codable {
     let useScreenCapture: Bool
     let outputMode: String
     let autoSendKey: String
+    let icon: CompanionJSONValue
+    let order: Int
+    let appConfigs: CompanionJSONValue
+    let urlConfigs: CompanionJSONValue
+    let triggerGroups: CompanionJSONValue
+    let triggerWords: [String]
+    let customCommand: String?
 }
 
 struct CompanionProviderDescriptor: Codable {
@@ -115,6 +141,13 @@ struct CompanionProviderDescriptor: Codable {
     let selected: Bool
     let models: [String]
     let selectedModel: String
+    let kind: String
+    let baseURL: String?
+    let requiresAPIKey: Bool
+    let keyConfigured: Bool
+    let verificationStatus: String?
+    let custom: Bool
+    let enabled: Bool
 }
 
 struct CompanionPromptDescriptor: Codable {
@@ -147,12 +180,20 @@ struct CompanionShortcutDescriptor: Codable {
     let display: String
 }
 
+struct CompanionShortcutCaptureState: Codable {
+    let status: String
+    let action: String?
+    let display: String?
+    let expiresAt: Date?
+}
+
 struct CompanionAudioTranscriptionItem: Codable {
     let id: String
     let filename: String
     let status: String
     let phase: String?
     let transcriptionID: String?
+    let errorMessage: String?
 }
 
 struct CompanionAudioTranscriptionState: Codable {
@@ -173,6 +214,71 @@ struct CompanionStateProgress: Codable {
     let message: String?
 }
 
+struct CompanionPermissionDescriptor: Codable {
+    let status: String
+    let granted: Bool
+}
+
+struct CompanionPermissionsState: Codable {
+    let accessibility: CompanionPermissionDescriptor
+    let microphone: CompanionPermissionDescriptor
+    let screenCapture: CompanionPermissionDescriptor
+}
+
+struct CompanionDashboardPeriodState: Codable {
+    let totalCount: Int
+    let totalWords: Int
+    let totalDuration: Double
+    let productivity: CompanionJSONValue
+    let modelUsage: CompanionJSONValue
+    let modelPerformance: CompanionJSONValue
+    let peakHours: CompanionJSONValue
+}
+
+struct CompanionDashboardSummary: Codable {
+    let today: CompanionDashboardPeriodState
+    let lastSevenDays: CompanionDashboardPeriodState
+    let lastThirtyDays: CompanionDashboardPeriodState
+    let thisYear: CompanionDashboardPeriodState
+    let allTime: CompanionDashboardPeriodState
+}
+
+struct CompanionDashboardState: Codable {
+    let summary: CompanionDashboardSummary?
+    let generatedAt: Date?
+    let sourceMetricCount: Int
+    let isStale: Bool
+    let displayName: String
+    let permissions: CompanionPermissionsState
+}
+
+struct CompanionSoundState: Codable {
+    let selection: String
+    let builtInID: String?
+    let customConfigured: Bool
+}
+
+struct CompanionAudioState: Codable {
+    let input: CompanionAudioInputState
+    let prioritizedDeviceUIDs: [String]
+    let pauseMediaDuringRecording: Bool
+    let muteSystemDuringRecording: Bool
+    let audioResumptionDelay: Double
+    let startSound: CompanionSoundState
+    let stopSound: CompanionSoundState
+}
+
+struct CompanionBackupState: Codable {
+    let categories: [String]
+    let maximumImportBytes: Int
+}
+
+struct CompanionLicenseState: Codable {
+    let status: String
+    let isPro: Bool
+    let trialDaysRemaining: Int?
+}
+
 struct CompanionStateResponse: Codable {
     let version: String
     let recordingState: String
@@ -183,9 +289,14 @@ struct CompanionStateResponse: Codable {
     let prompts: [CompanionPromptDescriptor]
     let audioInput: CompanionAudioInputState
     let shortcuts: [CompanionShortcutDescriptor]
+    let shortcutCapture: CompanionShortcutCaptureState
     let audioTranscription: CompanionAudioTranscriptionState
     let metadata: CompanionStateMetadata
     let progress: CompanionStateProgress
+    let dashboard: CompanionDashboardState
+    let audio: CompanionAudioState
+    let backup: CompanionBackupState
+    let license: CompanionLicenseState
 }
 
 struct CompanionVocabularyItem: Codable {
@@ -229,7 +340,11 @@ struct CompanionHistoryItem: Codable {
     let enhancedText: String?
     let timestamp: Date
     let duration: TimeInterval
+    let hasAudio: Bool
     let audioFileURL: String?
+    let audioFileExtension: String?
+    let transcriptionDuration: TimeInterval?
+    let enhancementDuration: TimeInterval?
     let transcriptionModelName: String?
     let aiEnhancementModelName: String?
     let promptName: String?
@@ -241,6 +356,7 @@ struct CompanionHistoryResponse: Codable {
     let items: [CompanionHistoryItem]
     let nextOffset: Int?
     let total: Int
+    let query: String?
 }
 
 struct CompanionSettingMutationRequest: Codable {

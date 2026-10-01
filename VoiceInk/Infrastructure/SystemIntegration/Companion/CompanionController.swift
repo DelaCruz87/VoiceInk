@@ -94,7 +94,11 @@ final class CompanionController {
         whisperModelManager: WhisperModelManager,
         fluidAudioModelManager: FluidAudioModelManager,
         aiService: AIService,
-        enhancementService: AIEnhancementService
+        enhancementService: AIEnhancementService,
+        recorderUIManager: RecorderUIManager,
+        recordingShortcutManager: RecordingShortcutManager,
+        updaterViewModel: UpdaterViewModel,
+        menuBarManager: MenuBarManager
     ) throws {
         let root = try CompanionEnvironment.applicationSupportRoot()
         let companionDirectory = root.appendingPathComponent("Companion", isDirectory: true)
@@ -115,6 +119,11 @@ final class CompanionController {
             fluidAudioModelManager: fluidAudioModelManager,
             aiService: aiService,
             enhancementService: enhancementService,
+            recorderUIManager: recorderUIManager,
+            recordingShortcutManager: recordingShortcutManager,
+            updaterViewModel: updaterViewModel,
+            menuBarManager: menuBarManager,
+            launchAtLoginManager: .shared,
             token: token
         )
         self.service = service

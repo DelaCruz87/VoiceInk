@@ -195,7 +195,11 @@ struct VoiceInkApp: App {
                 whisperModelManager: whisperModelManager,
                 fluidAudioModelManager: fluidAudioModelManager,
                 aiService: aiService,
-                enhancementService: enhancementService
+                enhancementService: enhancementService,
+                recorderUIManager: recorderUIManager,
+                recordingShortcutManager: recordingShortcutManager,
+                updaterViewModel: updaterViewModel,
+                menuBarManager: menuBarManager
             )
             controller.start()
             companionController = controller
