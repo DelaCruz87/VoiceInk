@@ -83,8 +83,12 @@ struct CompanionSettingDescriptor: Codable {
 
 struct CompanionModelDescriptor: Codable {
     let id: String
+    let order: Int
     let name: String
     let provider: String
+    let builtin: Bool
+    let platform: String?
+    let onDevice: Bool
     let available: Bool
     let downloaded: Bool
     let selected: Bool
@@ -104,6 +108,35 @@ struct CompanionModelDescriptor: Codable {
     let custom: Bool
     let keyConfigured: Bool
     let verificationStatus: String?
+}
+
+struct CompanionRefinementModelDescriptor: Codable {
+    let id: String
+    let order: Int
+    let name: String
+    let displayName: String
+    let provider: String
+    let kind: String
+    let badge: String?
+    let description: String
+    let platform: String
+    let onDevice: Bool
+    let minimumMemoryBytes: UInt64
+    let size: String
+    let available: Bool
+    let availabilityStatus: String
+    let unavailableDescription: String?
+    let downloaded: Bool
+    let selected: Bool
+    let selectable: Bool
+    let downloading: Bool
+    let finalizing: Bool
+    let downloadProgress: Double?
+    let downloadedBytes: Int64
+    let totalDownloadBytes: Int64
+    let downloadStatus: String
+    let deletable: Bool
+    let supportedActions: [String]
 }
 
 struct CompanionModeDescriptor: Codable {
@@ -203,9 +236,30 @@ struct CompanionAudioTranscriptionState: Codable {
 
 struct CompanionStateMetadata: Codable {
     let pendingModelID: String?
+    let pendingEnhancementSelection: CompanionPendingEnhancementSelection?
     let activeTranscriptionModelID: String?
     let historyCount: Int
     let dictionaryRevision: String
+}
+
+struct CompanionPendingEnhancementSelection: Codable, Equatable {
+    let action: String
+    let provider: String
+    let model: String?
+}
+
+struct CompanionEnhancementSelectionQueue {
+    private(set) var pending: CompanionPendingEnhancementSelection?
+
+    mutating func enqueue(_ selection: CompanionPendingEnhancementSelection) {
+        pending = selection
+    }
+
+    mutating func takeIfIdle(_ isIdle: Bool) -> CompanionPendingEnhancementSelection? {
+        guard isIdle, let pending else { return nil }
+        self.pending = nil
+        return pending
+    }
 }
 
 struct CompanionStateProgress: Codable {
@@ -284,6 +338,7 @@ struct CompanionStateResponse: Codable {
     let recordingState: String
     let settings: [CompanionSettingDescriptor]
     let models: [CompanionModelDescriptor]
+    let refinementModel: CompanionRefinementModelDescriptor
     let modes: [CompanionModeDescriptor]
     let providers: [CompanionProviderDescriptor]
     let prompts: [CompanionPromptDescriptor]

@@ -30,6 +30,8 @@ final class CompanionAPIService {
     private let token: String
     private var pendingModelID: String?
     private var lastModelSelectionError: String?
+    private var enhancementSelectionQueue = CompanionEnhancementSelectionQueue()
+    private var lastEnhancementSelectionError: String?
     private var recordingStateObserver: AnyCancellable?
     private var audioTranscriptionObserver: AnyCancellable?
     private var artifacts: [String: CompanionArtifact] = [:]
@@ -72,11 +74,11 @@ final class CompanionAPIService {
 
         recordingStateObserver = engine.$recordingState.sink { [weak self] state in
             guard state == .idle else { return }
-            Task { @MainActor [weak self] in self?.applyPendingModelIfPossible() }
+            Task { @MainActor [weak self] in self?.applyPendingSelectionsIfPossible() }
         }
         audioTranscriptionObserver = AudioTranscriptionManager.shared.$isProcessingQueue.sink { [weak self] isProcessing in
             guard !isProcessing else { return }
-            Task { @MainActor [weak self] in self?.applyPendingModelIfPossible() }
+            Task { @MainActor [weak self] in self?.applyPendingSelectionsIfPossible() }
         }
     }
 
@@ -168,6 +170,7 @@ final class CompanionAPIService {
             recordingState: recordingStateName(engine.recordingState),
             settings: settingDescriptors(),
             models: modelDescriptors(),
+            refinementModel: refinementModelDescriptor(),
             modes: modeDescriptors(),
             providers: providerDescriptors(),
             prompts: promptDescriptors(),
@@ -177,15 +180,12 @@ final class CompanionAPIService {
             audioTranscription: audioTranscriptionState(),
             metadata: CompanionStateMetadata(
                 pendingModelID: pendingModelID,
+                pendingEnhancementSelection: enhancementSelectionQueue.pending,
                 activeTranscriptionModelID: selectedID,
                 historyCount: historyCount,
                 dictionaryRevision: dictionary.revision
             ),
-            progress: CompanionStateProgress(
-                kind: pendingModelID == nil && lastModelSelectionError == nil ? nil : "modelSelection",
-                status: pendingModelID != nil ? "pending" : (lastModelSelectionError == nil ? "idle" : "failed"),
-                message: lastModelSelectionError
-            ),
+            progress: selectionProgress(),
             dashboard: try dashboardState(),
             audio: audioState(),
             backup: CompanionBackupState(
@@ -740,13 +740,18 @@ final class CompanionAPIService {
     private func modelDescriptors() -> [CompanionModelDescriptor] {
         let usableIDs = Set(transcriptionModelManager.usableModels.map(modelID))
         let selectedID = transcriptionModelManager.currentTranscriptionModel.map(modelID)
-        return transcriptionModelManager.allAvailableModels.map { model in
+        return transcriptionModelManager.allAvailableModels.enumerated().map { index, model in
             let id = modelID(model)
             let download = modelDownloadState(model)
+            let custom = model is CustomCloudModel || model is ImportedWhisperModel
             return CompanionModelDescriptor(
                 id: id,
+                order: index + 1,
                 name: model.name,
                 provider: model.provider.rawValue,
+                builtin: !custom,
+                platform: model.provider == .nativeApple ? "macOS 26+" : nil,
+                onDevice: [.whisper, .fluidAudio, .transcribeCpp, .nativeApple].contains(model.provider),
                 available: transcriptionModelManager.isAvailableOnCurrentOS(model),
                 downloaded: usableIDs.contains(id),
                 selected: selectedID == id,
@@ -763,13 +768,79 @@ final class CompanionAPIService {
                 accuracy: modelMetrics(model).accuracy,
                 ramUsage: modelMetrics(model).ramUsage,
                 publisher: modelMetrics(model).publisher,
-                custom: model is CustomCloudModel || model is ImportedWhisperModel,
+                custom: custom,
                 keyConfigured: (model as? CustomCloudModel).map { !$0.apiKey.isEmpty } ?? false,
                 verificationStatus: nil
             )
-        }.sorted { lhs, rhs in
-            lhs.provider == rhs.provider ? lhs.name < rhs.name : lhs.provider < rhs.provider
         }
+    }
+
+    private func refinementModelDescriptor() -> CompanionRefinementModelDescriptor {
+        let service = aiService.voiceInkRefineService
+        let availabilityStatus: String
+        switch service.availability {
+        case .available: availabilityStatus = "available"
+        case .unsupportedIntel: availabilityStatus = "unsupportedIntel"
+        case .insufficientMemory: availabilityStatus = "insufficientMemory"
+        }
+
+        let downloadStatus: String
+        if service.isDownloading {
+            downloadStatus = service.isFinalizingDownload ? "finalizing" : "downloading"
+        } else if service.isDownloaded {
+            downloadStatus = "downloaded"
+        } else if service.downloadError != nil {
+            downloadStatus = "failed"
+        } else if service.availability != .available {
+            downloadStatus = "unavailable"
+        } else {
+            downloadStatus = "notDownloaded"
+        }
+
+        var supportedActions: [String] = []
+        if service.isDownloading {
+            supportedActions.append("cancelRefinementModelDownload")
+        } else if service.isDownloaded {
+            supportedActions.append("deleteRefinementModel")
+        } else if service.availability == .available {
+            supportedActions.append("downloadRefinementModel")
+        }
+        if service.isAvailableInModes {
+            supportedActions.append(contentsOf: ["selectEnhancementProvider", "selectEnhancementModel"])
+        }
+
+        return CompanionRefinementModelDescriptor(
+            id: refinementModelID,
+            order: 0,
+            name: VoiceInkRefineService.modelName,
+            displayName: VoiceInkRefineService.modelName,
+            provider: VoiceInkRefineService.providerName,
+            kind: "enhancement",
+            badge: "New",
+            description: "Cleans up raw transcripts. Processing stays on your Mac.",
+            platform: "Apple silicon",
+            onDevice: true,
+            minimumMemoryBytes: VoiceInkRefineService.minimumMemoryBytes,
+            size: VoiceInkRefineService.downloadSizeDescription,
+            available: service.availability == .available,
+            availabilityStatus: availabilityStatus,
+            unavailableDescription: service.unavailableDescription,
+            downloaded: service.isDownloaded,
+            selected: aiService.selectedProvider == .voiceInkRefine,
+            selectable: service.isAvailableInModes,
+            downloading: service.isDownloading,
+            finalizing: service.isFinalizingDownload,
+            downloadProgress: service.isDownloading ? service.downloadProgress : (service.isDownloaded ? 1 : nil),
+            downloadedBytes: service.downloadedBytes,
+            totalDownloadBytes: service.totalDownloadBytes,
+            downloadStatus: downloadStatus,
+            deletable: service.isDownloaded && !service.isDownloading,
+            supportedActions: supportedActions
+        )
+    }
+
+    private var refinementModelID: String {
+        "voiceink-refine-v1"
     }
 
     private func modeDescriptors() -> [CompanionModeDescriptor] {
@@ -1039,6 +1110,9 @@ final class CompanionAPIService {
             action("cancelShortcutCapture", "Cancel shortcut recording"),
             action("downloadModel", "Download transcription model", [arg("id", "string")]),
             action("deleteModel", "Delete transcription model", [arg("id", "string")]),
+            action("downloadRefinementModel", "Download VoiceInk Refine", [arg("id", "string")]),
+            action("cancelRefinementModelDownload", "Cancel VoiceInk Refine download", [arg("id", "string")]),
+            action("deleteRefinementModel", "Delete VoiceInk Refine", [arg("id", "string")]),
             action("deleteHistory", "Delete history", [arg("ids", "array")]),
             action("cleanupHistory", "Clean up history", [arg("kind", "string", true, ["transcriptions", "audio"])]),
             action("addPrioritizedAudioDevice", "Add prioritized microphone", [arg("uid", "string")]),
@@ -1078,7 +1152,7 @@ final class CompanionAPIService {
         guard transcriptionModelManager.usableModels.contains(where: { modelID($0) == modelID(model) }) else {
             throw CompanionRouteError(409, "model_unavailable", "The model is not currently usable")
         }
-        if engine.recordingState != .idle || AudioTranscriptionManager.shared.isProcessingQueue {
+        if selectionIsBusy {
             pendingModelID = id
             lastModelSelectionError = nil
             return CompanionModelSelectionResponse(status: "pending", id: id)
@@ -1088,17 +1162,30 @@ final class CompanionAPIService {
         return CompanionModelSelectionResponse(status: "applied", id: id)
     }
 
-    private func applyPendingModelIfPossible() {
-        guard engine.recordingState == .idle,
-            !AudioTranscriptionManager.shared.isProcessingQueue,
-            let id = pendingModelID
-        else { return }
+    private var selectionIsBusy: Bool {
+        engine.recordingState != .idle || AudioTranscriptionManager.shared.isProcessingQueue
+    }
+
+    private func applyPendingSelectionsIfPossible() {
+        guard !selectionIsBusy else { return }
+
+        if let id = pendingModelID {
+            do {
+                try applyModel(id)
+                pendingModelID = nil
+                lastModelSelectionError = nil
+            } catch {
+                pendingModelID = nil
+                lastModelSelectionError = "The pending transcription model could not be applied"
+            }
+        }
+
+        guard let selection = enhancementSelectionQueue.takeIfIdle(true) else { return }
         do {
-            try applyModel(id)
-            pendingModelID = nil
+            try applyEnhancementSelection(selection)
+            lastEnhancementSelectionError = nil
         } catch {
-            pendingModelID = nil
-            lastModelSelectionError = "The pending model could not be applied"
+            lastEnhancementSelectionError = "The pending enhancement selection could not be applied"
         }
     }
 
@@ -1110,6 +1197,83 @@ final class CompanionAPIService {
             throw CompanionRouteError(409, "model_unavailable", "The model is not currently usable")
         }
         transcriptionModelManager.setDefaultTranscriptionModel(model)
+    }
+
+    private func selectionProgress() -> CompanionStateProgress {
+        if pendingModelID != nil {
+            return CompanionStateProgress(kind: "modelSelection", status: "pending", message: nil)
+        }
+        if enhancementSelectionQueue.pending != nil {
+            return CompanionStateProgress(kind: "enhancementSelection", status: "pending", message: nil)
+        }
+        if let message = lastModelSelectionError {
+            return CompanionStateProgress(kind: "modelSelection", status: "failed", message: message)
+        }
+        if let message = lastEnhancementSelectionError {
+            return CompanionStateProgress(kind: "enhancementSelection", status: "failed", message: message)
+        }
+        return CompanionStateProgress(kind: nil, status: "idle", message: nil)
+    }
+
+    private func validatedEnhancementProviderSelection(
+        _ rawProvider: String
+    ) throws -> CompanionPendingEnhancementSelection {
+        guard let provider = AIProvider(rawValue: rawProvider), provider.supportsEnhancement else {
+            throw CompanionRouteError(400, "invalid_action_args", "Unknown enhancement provider")
+        }
+        if provider == .voiceInkRefine, !aiService.voiceInkRefineService.isAvailableInModes {
+            throw CompanionRouteError(409, "refinement_model_unavailable", "VoiceInk Refine must be downloaded before selection")
+        }
+        return CompanionPendingEnhancementSelection(
+            action: "provider",
+            provider: provider.rawValue,
+            model: nil
+        )
+    }
+
+    private func validatedEnhancementModelSelection(
+        provider rawProvider: String,
+        model: String
+    ) throws -> CompanionPendingEnhancementSelection {
+        guard let provider = AIProvider(rawValue: rawProvider), provider.supportsEnhancement,
+            aiService.availableModels(for: provider).contains(model)
+                || (provider == .localCLI && model == provider.defaultModel)
+        else {
+            throw CompanionRouteError(422, "invalid_action_args", "Enhancement model is unavailable")
+        }
+        if provider == .voiceInkRefine, !aiService.voiceInkRefineService.isAvailableInModes {
+            throw CompanionRouteError(409, "refinement_model_unavailable", "VoiceInk Refine must be downloaded before selection")
+        }
+        return CompanionPendingEnhancementSelection(
+            action: "model",
+            provider: provider.rawValue,
+            model: model
+        )
+    }
+
+    private func applyEnhancementSelection(
+        _ selection: CompanionPendingEnhancementSelection
+    ) throws {
+        switch selection.action {
+        case "provider":
+            let validated = try validatedEnhancementProviderSelection(selection.provider)
+            guard let provider = AIProvider(rawValue: validated.provider) else {
+                throw CompanionRouteError(400, "invalid_action_args", "Unknown enhancement provider")
+            }
+            aiService.selectedProvider = provider
+        case "model":
+            guard let model = selection.model else {
+                throw CompanionRouteError(400, "invalid_action_args", "Enhancement model is required")
+            }
+            let validated = try validatedEnhancementModelSelection(provider: selection.provider, model: model)
+            guard let provider = AIProvider(rawValue: validated.provider), let validatedModel = validated.model else {
+                throw CompanionRouteError(400, "invalid_action_args", "Enhancement selection is invalid")
+            }
+            aiService.selectModel(validatedModel, for: provider)
+            aiService.selectedProvider = provider
+        default:
+            throw CompanionRouteError(400, "invalid_action_args", "Unknown enhancement selection")
+        }
     }
 
     private func performAction(_ request: CompanionActionRequest) async throws -> CompanionActionResponse {
@@ -1157,21 +1321,36 @@ final class CompanionAPIService {
             NotificationCenter.default.post(name: .modeConfigurationApplied, object: nil)
         case "selectEnhancementProvider":
             let rawProvider = try requiredString(request.args, "provider", maximum: 100)
-            guard let provider = AIProvider(rawValue: rawProvider), provider.supportsEnhancement else {
-                throw CompanionRouteError(400, "invalid_action_args", "Unknown enhancement provider")
+            let selection = try validatedEnhancementProviderSelection(rawProvider)
+            if selectionIsBusy {
+                enhancementSelectionQueue.enqueue(selection)
+                lastEnhancementSelectionError = nil
+                responseStatus = "pending"
+            } else {
+                enhancementSelectionQueue.enqueue(selection)
+                guard let immediateSelection = enhancementSelectionQueue.takeIfIdle(true) else {
+                    throw CompanionRouteError(500, "selection_failed", "Enhancement selection could not be applied")
+                }
+                try applyEnhancementSelection(immediateSelection)
+                lastEnhancementSelectionError = nil
             }
-            aiService.selectedProvider = provider
-            responseID = provider.rawValue
+            responseID = selection.provider
         case "selectEnhancementModel":
             let rawProvider = try requiredString(request.args, "provider", maximum: 100)
             let model = try requiredString(request.args, "model", maximum: 500)
-            guard let provider = AIProvider(rawValue: rawProvider), provider.supportsEnhancement,
-                aiService.availableModels(for: provider).contains(model)
-                    || (provider == .localCLI && model == provider.defaultModel)
-            else {
-                throw CompanionRouteError(422, "invalid_action_args", "Enhancement model is unavailable")
+            let selection = try validatedEnhancementModelSelection(provider: rawProvider, model: model)
+            if selectionIsBusy {
+                enhancementSelectionQueue.enqueue(selection)
+                lastEnhancementSelectionError = nil
+                responseStatus = "pending"
+            } else {
+                enhancementSelectionQueue.enqueue(selection)
+                guard let immediateSelection = enhancementSelectionQueue.takeIfIdle(true) else {
+                    throw CompanionRouteError(500, "selection_failed", "Enhancement selection could not be applied")
+                }
+                try applyEnhancementSelection(immediateSelection)
+                lastEnhancementSelectionError = nil
             }
-            aiService.selectModel(model, for: provider)
             responseID = model
         case "upsertPrompt":
             let title = try requiredString(request.args, "title", maximum: 200)
@@ -1346,6 +1525,43 @@ final class CompanionAPIService {
         case "deleteModel":
             let id = try requiredString(request.args, "id", maximum: 200)
             if try deleteModel(id) { responseStatus = "pending" }
+            responseID = id
+        case "downloadRefinementModel":
+            let id = try requiredRefinementModelID(request.args)
+            let service = aiService.voiceInkRefineService
+            guard service.availability == .available else {
+                throw CompanionRouteError(409, "refinement_model_unavailable", "VoiceInk Refine is unavailable on this Mac")
+            }
+            guard !service.isDownloaded else {
+                throw CompanionRouteError(409, "model_installed", "VoiceInk Refine is already downloaded")
+            }
+            guard !service.isDownloading else {
+                throw CompanionRouteError(409, "model_download_busy", "VoiceInk Refine is already downloading")
+            }
+            try rejectSharedModelMutationInCompanionTest()
+            service.startDownload()
+            responseID = id
+            responseStatus = "pending"
+        case "cancelRefinementModelDownload":
+            let id = try requiredRefinementModelID(request.args)
+            let service = aiService.voiceInkRefineService
+            guard service.isDownloading else {
+                throw CompanionRouteError(409, "model_download_idle", "VoiceInk Refine is not downloading")
+            }
+            service.cancelDownload()
+            responseID = id
+            responseStatus = "pending"
+        case "deleteRefinementModel":
+            let id = try requiredRefinementModelID(request.args)
+            let service = aiService.voiceInkRefineService
+            guard service.isDownloaded else {
+                throw CompanionRouteError(409, "model_not_deletable", "VoiceInk Refine is not downloaded")
+            }
+            try rejectSharedModelMutationInCompanionTest()
+            await service.deleteModel()
+            guard !service.isDownloaded else {
+                throw CompanionRouteError(500, "model_delete_failed", "VoiceInk Refine could not be deleted")
+            }
             responseID = id
         case "deleteHistory":
             let ids = try requiredUUIDArray(request.args, "ids", maximumCount: 500)
@@ -1825,6 +2041,16 @@ final class CompanionAPIService {
                 "This provider uses a shared model store and cannot be mutated from CompanionTest"
             )
         }
+    }
+
+    private func requiredRefinementModelID(
+        _ args: [String: CompanionJSONValue]?
+    ) throws -> String {
+        let id = try requiredString(args, "id", maximum: 200)
+        guard id == refinementModelID else {
+            throw CompanionRouteError(404, "model_not_found", "Unknown refinement model")
+        }
+        return id
     }
 
     private func requiredString(
