@@ -15,7 +15,14 @@ PROVISIONING_PROFILE_SPECIFIER =
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) LOCAL_BUILD
 
 // Ad-hoc local override for Eme's established GPL installation and permissions: keep the historical app identity.
-// Upstream changes to product naming, bundle identity, or local-build storage may make this stale; revalidate the
-// installed bundle id, Application Support path, Accessibility permission, and launch behavior before rebasing.
-PRODUCT_BUNDLE_IDENTIFIER = com.prakashjoshipax.VoiceInk.GPL
+// Do not apply the app id to VoiceInkRefineXPC. The helper must keep its own service name,
+// and that name must be prefixed by the GPL app id or launchd will not attach the XPC.
+// A global PRODUCT_BUNDLE_IDENTIFIER here made 2.13 local builds fail with
+// "Couldn't communicate with a helper application".
+// Upstream changes to product naming, bundle identity, XPC service name, or local-build storage may make this stale;
+// revalidate the installed app and XPC bundle ids, Application Support path, Accessibility permission, and launch behavior before rebasing.
+VOICEINK_LOCAL_BUNDLE_ID_DEFAULT = com.prakashjoshipax.VoiceInk.GPL
+VOICEINK_LOCAL_BUNDLE_ID_VoiceInk = com.prakashjoshipax.VoiceInk.GPL
+VOICEINK_LOCAL_BUNDLE_ID_VoiceInkRefineXPC = com.prakashjoshipax.VoiceInk.GPL.RefineXPC
+PRODUCT_BUNDLE_IDENTIFIER = $(VOICEINK_LOCAL_BUNDLE_ID_$(TARGET_NAME:identifier):default=$(VOICEINK_LOCAL_BUNDLE_ID_DEFAULT))
 INFOPLIST_KEY_CFBundleDisplayName = VoiceInk-GPL

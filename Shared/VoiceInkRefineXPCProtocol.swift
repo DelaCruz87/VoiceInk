@@ -1,7 +1,16 @@
 import Foundation
 
+// Ad-hoc local override: the GPL app id is com.prakashjoshipax.VoiceInk.GPL, and an
+// embedded XPC CFBundleIdentifier must be prefixed by the host app id. Upstream's
+// com.prakashjoshipax.VoiceInk.RefineXPC is valid for the App Store bundle, not for GPL.
+// Revalidate this if the local app bundle id or upstream XPC service name changes.
+#if LOCAL_BUILD
+let voiceInkRefineXPCServiceName = "com.prakashjoshipax.VoiceInk.GPL.RefineXPC"
+let voiceInkRefineXPCErrorDomain = "com.prakashjoshipax.VoiceInk.GPL.RefineXPC"
+#else
 let voiceInkRefineXPCServiceName = "com.prakashjoshipax.VoiceInk.RefineXPC"
 let voiceInkRefineXPCErrorDomain = "com.prakashjoshipax.VoiceInk.RefineXPC"
+#endif
 
 struct VoiceInkRefinePrepareRequest: Codable, Sendable {
     let requestID: UUID
