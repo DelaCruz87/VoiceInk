@@ -3,7 +3,7 @@ import FluidAudio
 import Foundation
 import os
 
-struct FluidAudioDownloadStatus {
+struct FluidAudioDownloadStatus: Equatable {
     let fractionCompleted: Double
     let message: String
     let isIndeterminate: Bool
@@ -21,6 +21,7 @@ class FluidAudioModelManager: ObservableObject {
     @Published private var modelStateRevision = 0
     private var activeDownloadIDs: [String: UUID] = [:]
     private var activeNetworkProgressIDs: [String: UUID] = [:]
+    private var activeDownloadTasks: [String: Task<Void, Never>] = [:]
 
     var onModelDeleted: ((String) -> Void)?
     var onModelsChanged: (() -> Void)?
@@ -31,6 +32,7 @@ class FluidAudioModelManager: ObservableObject {
     nonisolated private static let modelVersionMap: [String: AsrModelVersion] = [
         "parakeet-tdt-0.6b-v2": .v2,
         "parakeet-tdt-0.6b-v3": .v3,
+        "parakeet-ultra": .ultra,
     ]
 
     private enum FluidAudioModelKind {
@@ -138,7 +140,7 @@ class FluidAudioModelManager: ObservableObject {
     nonisolated static func languageHint(from languageCode: String?, for modelName: String) -> Language? {
         guard !isParakeetUnifiedModel(named: modelName),
             !isNemotronModel(named: modelName),
-            asrVersion(for: modelName) == .v3,
+            asrVersion(for: modelName).isV3Family,
             let languageCode,
             languageCode != "auto"
         else { return nil }
@@ -178,7 +180,20 @@ class FluidAudioModelManager: ObservableObject {
 
     // MARK: - Download
 
-    func downloadFluidAudioModel(_ model: FluidAudioModel) async {
+    func startDownload(_ model: FluidAudioModel) {
+        guard activeDownloadTasks[model.name] == nil else { return }
+        activeDownloadTasks[model.name] = Task { [weak self] in
+            guard let self else { return }
+            await self.downloadFluidAudioModel(model)
+            self.activeDownloadTasks[model.name] = nil
+        }
+    }
+
+    func cancelDownload(_ model: FluidAudioModel) {
+        activeDownloadTasks[model.name]?.cancel()
+    }
+
+    private func downloadFluidAudioModel(_ model: FluidAudioModel) async {
         if isFluidAudioModelDownloaded(model) || isFluidAudioModelDownloading(model) {
             return
         }
@@ -196,11 +211,25 @@ class FluidAudioModelManager: ObservableObject {
             onModelsChanged?()
         }
 
-        let progressHandler: ProgressHandler = { [weak self] progress in
-            Task { @MainActor [weak self] in
+        // Coalesce chunk callbacks before they reach the main actor and invalidate SwiftUI.
+        let (progressStream, progressContinuation) = AsyncStream<DownloadProgress>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let progressTask = Task { @MainActor [weak self] in
+            for await progress in progressStream {
+                guard !Task.isCancelled else { break }
                 self?.updateDownloadProgress(progress, for: modelName, downloadID: downloadID)
+                try? await Task.sleep(for: .milliseconds(500))
             }
         }
+        defer {
+            progressContinuation.finish()
+            progressTask.cancel()
+        }
+        let progressHandler: ProgressHandler = { progress in
+            progressContinuation.yield(progress)
+        }
+        var isPreparingModel = false
 
         do {
             switch Self.modelKind(for: modelName) {
@@ -212,15 +241,21 @@ class FluidAudioModelManager: ObservableObject {
                     additionalModelNames: [Self.parakeetUnifiedStreamingEncoderFile],
                     progressHandler: Self.downloadOnlyProgressHandler(forwarding: progressHandler)
                 )
+                try Task.checkCancellation()
+                isPreparingModel = true
                 beginModelPreparation(for: modelName, downloadID: downloadID)
                 try await Self.optimizeParakeetUnifiedRealtimeModel()
+                try Task.checkCancellation()
                 try await Self.optimizeParakeetUnifiedBatchModel()
+                try Task.checkCancellation()
             case .nemotron(let variant):
                 let modelDirectory = try await StreamingNemotronMultilingualAsrManager.downloadVariant(
                     languageCode: variant.downloadLanguageCode,
                     chunkMs: Self.nemotronChunkMs,
                     progressHandler: progressHandler
                 )
+                try Task.checkCancellation()
+                isPreparingModel = true
                 beginModelPreparation(for: modelName, downloadID: downloadID)
                 let manager = StreamingNemotronMultilingualAsrManager()
                 do {
@@ -230,6 +265,7 @@ class FluidAudioModelManager: ObservableObject {
                     throw error
                 }
                 await manager.cleanup()
+                try Task.checkCancellation()
             case .parakeet(let version):
                 guard let repo = Self.parakeetRepo(for: version) else {
                     throw AsrModelsError.loadingFailed("Unsupported Parakeet model version.")
@@ -242,16 +278,27 @@ class FluidAudioModelManager: ObservableObject {
                     additionalModelNames: [ModelNames.ASR.vocabularyFile],
                     progressHandler: Self.downloadOnlyProgressHandler(forwarding: progressHandler)
                 )
+                try Task.checkCancellation()
+                isPreparingModel = true
                 beginModelPreparation(for: modelName, downloadID: downloadID)
                 _ = try await AsrModels.load(
                     from: cacheDirectory,
                     version: version,
                     encoderPrecision: .int8
                 )
+                try Task.checkCancellation()
             }
+            try Task.checkCancellation()
             modelStateRevision += 1
         } catch {
-            logger.error("❌ FluidAudio download failed for \(modelName, privacy: .public): \(error, privacy: .public)")
+            if error is CancellationError || Task.isCancelled {
+                if !isPreparingModel {
+                    try? FileManager.default.removeItem(at: cacheDirectory(for: model))
+                }
+                modelStateRevision += 1
+            } else {
+                logger.error("❌ FluidAudio download failed for \(modelName, privacy: .public): \(error, privacy: .public)")
+            }
         }
     }
 
@@ -286,6 +333,8 @@ class FluidAudioModelManager: ObservableObject {
             return .parakeetV2
         case .v3:
             return .parakeetV3
+        case .ultra:
+            return .parakeetUltra
         default:
             return nil
         }
@@ -434,11 +483,13 @@ class FluidAudioModelManager: ObservableObject {
         let currentFraction = downloadStatuses[modelName]?.fractionCompleted ?? 0.0
         guard reportedFraction >= currentFraction else { return }
 
-        downloadStatuses[modelName] = FluidAudioDownloadStatus(
+        let status = FluidAudioDownloadStatus(
             fractionCompleted: reportedFraction,
             message: FluidAudioModelManager.statusMessage(for: progress),
             isIndeterminate: Self.isIndeterminatePhase(progress.phase)
         )
+        guard status != downloadStatuses[modelName] else { return }
+        downloadStatuses[modelName] = status
     }
 
     private static func isIndeterminatePhase(_ phase: DownloadPhase) -> Bool {

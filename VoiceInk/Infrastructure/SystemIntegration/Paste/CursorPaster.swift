@@ -26,6 +26,11 @@ class CursorPaster {
         }
     }
 
+    struct PasteOutcome {
+        let result: PasteResult
+        let autoLearnGeneration: UInt64?
+    }
+
     private static let prePasteDelay: TimeInterval = 0.10
     private static let pasteShortcutEventDelay: TimeInterval = 0.01
     private static let minimumClipboardRestoreDelay: TimeInterval = 0.25
@@ -41,19 +46,14 @@ class CursorPaster {
 
     @MainActor
     @discardableResult
-    static func startPasteAtCursor(_ text: String) -> Task<PasteResult, Never> {
+    static func startPasteAtCursor(_ text: String) -> Task<PasteOutcome, Never> {
         Task { @MainActor in
             await performPasteSession(text)
         }
     }
 
     @MainActor
-    static func pasteAtCursorAndWaitUntilPosted(_ text: String) async -> PasteResult {
-        await startPasteAtCursor(text).value
-    }
-
-    @MainActor
-    private static func performPasteSession(_ text: String) async -> PasteResult {
+    private static func performPasteSession(_ text: String) async -> PasteOutcome {
         let pasteboard = NSPasteboard.general
         let shouldRestoreClipboard = UserDefaults.standard.bool(forKey: "restoreClipboardAfterPaste")
         let savedContents = shouldRestoreClipboard ? snapshotClipboard(from: pasteboard) : []
@@ -68,12 +68,27 @@ class CursorPaster {
             )
         else {
             logger.error("Failed to prepare clipboard for paste")
-            return .commandNotPosted
+            return PasteOutcome(result: .commandNotPosted, autoLearnGeneration: nil)
         }
 
         await wait(prePasteDelay)
 
-        let pasteResult = await postPasteCommand()
+        let pasteResult: PasteResult
+        let autoLearnGeneration: UInt64?
+        if AutoLearnSettings.isEnabled {
+            let targetProcessID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            pasteResult = await postPasteCommand()
+            autoLearnGeneration = await AutoLearnService.shared.pasteDidFinish(
+                // Local GPL override: Auto Learn must observe the exact labelled text pasted above.
+                // Revalidate if prefix formatting or upstream correction snapshots change.
+                text: pasteText,
+                processID: targetProcessID,
+                commandPosted: pasteResult.didPostPasteCommand
+            )
+        } else {
+            pasteResult = await postPasteCommand()
+            autoLearnGeneration = nil
+        }
         if shouldRestoreClipboard {
             scheduleClipboardRestore(
                 savedContents,
@@ -83,7 +98,7 @@ class CursorPaster {
             )
         }
 
-        return pasteResult
+        return PasteOutcome(result: pasteResult, autoLearnGeneration: autoLearnGeneration)
     }
 
     private static func snapshotClipboard(from pasteboard: NSPasteboard) -> ClipboardSnapshot {
@@ -229,9 +244,9 @@ class CursorPaster {
         try? await Task.sleep(nanoseconds: nanoseconds)
     }
 
-    // MARK: - Auto Send Keys
+    // MARK: - Send Key
 
-    static func performAutoSend(_ key: AutoSendKey) {
+    static func performSendKey(_ key: FinishAndSendKey) {
         guard key.isEnabled else { return }
         guard AXIsProcessTrusted() else { return }
 

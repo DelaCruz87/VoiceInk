@@ -11,8 +11,9 @@ struct VoiceInkApp: App {
     let container: ModelContainer
 
     @StateObject private var engine: VoiceInkEngine
-    @StateObject private var whisperModelManager: WhisperModelManager
-    @StateObject private var fluidAudioModelManager: FluidAudioModelManager
+    // Retain managers without subscribing the entire scene to download progress.
+    @State private var whisperModelManager: WhisperModelManager
+    @State private var fluidAudioModelManager: FluidAudioModelManager
     @StateObject private var transcriptionModelManager: TranscriptionModelManager
     @StateObject private var recorderUIManager: RecorderUIManager
     @StateObject private var recordingShortcutManager: RecordingShortcutManager
@@ -23,7 +24,7 @@ struct VoiceInkApp: App {
     @StateObject private var enhancementService: AIEnhancementService
     @StateObject private var licenseViewModel = LicenseViewModel.shared
     @StateObject private var activeWindowService = ActiveWindowService.shared
-    @AppStorage("hasCompletedOnboardingV2") private var hasCompletedOnboardingV2 = false
+    @AppStorage(OnboardingSettings.completedV2Key) private var hasCompletedOnboardingV2 = false
     @AppStorage("enableAnnouncements") private var enableAnnouncements = true
     @State private var showMenuBarIcon = true
     @State private var didShowLaunchReminders = false
@@ -94,7 +95,7 @@ struct VoiceInkApp: App {
         }
 
         container = resolvedContainer
-        DictionaryService.removeExactDuplicateContent(context: resolvedContainer.mainContext, source: "launch")
+        DictionaryService.cleanUpDictionaryContent(context: resolvedContainer.mainContext, source: "launch")
 
         // Initialize services with proper sharing of instances
         let aiService = AIService()
@@ -109,6 +110,13 @@ struct VoiceInkApp: App {
 
         let enhancementService = AIEnhancementService(aiService: aiService, modelContext: resolvedContainer.mainContext)
         _enhancementService = StateObject(wrappedValue: enhancementService)
+        let autoLearnReviewer = AutoLearnAIReviewer(enhancementService: enhancementService)
+        Task {
+            await AutoLearnService.shared.configure(
+                modelContainer: resolvedContainer,
+                reviewer: autoLearnReviewer
+            )
+        }
 
         // 1. Create modelsDirectory URL
         // ENSO ad-hoc local override: VOICEINK_COMPANION_DATA_DIR isolates model assets together with
@@ -153,8 +161,8 @@ struct VoiceInkApp: App {
         transcriptionModelManager.refreshAllAvailableModels()
         transcriptionModelManager.loadCurrentTranscriptionModel()
 
-        _whisperModelManager = StateObject(wrappedValue: whisperModelManager)
-        _fluidAudioModelManager = StateObject(wrappedValue: fluidAudioModelManager)
+        _whisperModelManager = State(initialValue: whisperModelManager)
+        _fluidAudioModelManager = State(initialValue: fluidAudioModelManager)
         _transcriptionModelManager = StateObject(wrappedValue: transcriptionModelManager)
         _recorderUIManager = StateObject(wrappedValue: recorderUIManager)
         _engine = StateObject(wrappedValue: engine)
@@ -367,12 +375,25 @@ struct VoiceInkApp: App {
                         .environmentObject(aiService)
                         .environmentObject(enhancementService)
                         .modelContainer(container)
-                        .onAppear {
-                            if enableAnnouncements {
-                                AnnouncementsService.shared.start()
+                        .lazyChangeLogPresenter { isPresenting in
+                            if isPresenting {
+                                if enableAnnouncements {
+                                    AnnouncementsService.shared.stop()
+                                }
+                            } else {
+                                if enableAnnouncements {
+                                    AnnouncementsService.shared.start()
+                                }
+                                showLaunchRemindersIfNeeded()
                             }
-
-                            showLaunchRemindersIfNeeded()
+                        }
+                        .onAppear {
+                            if !ChangeLogManager.needsPresentation() {
+                                if enableAnnouncements {
+                                    AnnouncementsService.shared.start()
+                                }
+                                showLaunchRemindersIfNeeded()
+                            }
 
                             GitHubStarPromptCoordinator.shared.scheduleIfNeeded(modelContainer: container)
 

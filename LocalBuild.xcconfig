@@ -26,3 +26,8 @@ VOICEINK_LOCAL_BUNDLE_ID_VoiceInk = com.prakashjoshipax.VoiceInk.GPL
 VOICEINK_LOCAL_BUNDLE_ID_VoiceInkRefineXPC = com.prakashjoshipax.VoiceInk.GPL.RefineXPC
 PRODUCT_BUNDLE_IDENTIFIER = $(VOICEINK_LOCAL_BUNDLE_ID_$(TARGET_NAME:identifier):default=$(VOICEINK_LOCAL_BUNDLE_ID_DEFAULT))
 INFOPLIST_KEY_CFBundleDisplayName = VoiceInk-GPL
+
+// Ad-hoc local override: dependencies moved into the ENSO companion project on 2026-10-22.
+// Keep the project reference configurable instead of relying on the removed home directory.
+// Revalidate when the source project or whisper framework location changes.
+VOICEINK_WHISPER_FRAMEWORK_PATH = $(SRCROOT)/../../../+PKM/+Obsidian/+Obsidian Plugins/+VoiceInk Companion/dependencies/whisper.cpp-source/build-apple/whisper.xcframework

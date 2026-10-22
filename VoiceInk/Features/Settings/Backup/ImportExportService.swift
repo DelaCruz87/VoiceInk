@@ -184,7 +184,12 @@ class ImportExportService {
             isTextFormattingEnabled: UserDefaults.standard.bool(forKey: keyIsTextFormattingEnabled),
             isExperimentalFeaturesEnabled: UserDefaults.standard.bool(forKey: "isExperimentalFeaturesEnabled"),
             restoreClipboardAfterPaste: UserDefaults.standard.bool(forKey: "restoreClipboardAfterPaste"),
-            clipboardRestoreDelay: UserDefaults.standard.double(forKey: "clipboardRestoreDelay")
+            clipboardRestoreDelay: UserDefaults.standard.double(forKey: "clipboardRestoreDelay"),
+            finishAndSendKey: FinishAndSendSettings.selectedKey.rawValue,
+            isAutoLearnDictionaryEnabled: AutoLearnSettings.isEnabled,
+            autoLearnReviewSchedule: AutoLearnSettings.reviewSchedule.rawValue,
+            autoLearnProvider: AutoLearnSettings.selectedProvider?.rawValue,
+            autoLearnModel: AutoLearnSettings.selectedModel
         )
 
         let exportedSettings = BackupFile(
@@ -249,7 +254,7 @@ class ImportExportService {
         menuBarManager: MenuBarManager, mediaController: MediaController, playbackController: PlaybackController,
         recorderUIManager: RecorderUIManager, modelContext: ModelContext,
         transcriptionModelManager: TranscriptionModelManager
-    ) {
+    ) async {
         let openPanel = NSOpenPanel()
         openPanel.allowedContentTypes = [UTType.json]
         openPanel.canChooseFiles = true
@@ -301,7 +306,7 @@ class ImportExportService {
                 return
             }
 
-            try BackupImporter.apply(
+            try await BackupImporter.apply(
                 backup,
                 categories: selectedCategories,
                 enhancementService: enhancementService,
