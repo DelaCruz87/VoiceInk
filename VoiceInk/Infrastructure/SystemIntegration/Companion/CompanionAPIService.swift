@@ -417,9 +417,9 @@ final class CompanionAPIService {
         } else {
             let item = WordReplacement(
                 originalText: original,
-                replacementText: replacement,
-                isEnabled: operation.isEnabled ?? true
+                replacementText: replacement
             )
+            item.isEnabled = operation.isEnabled ?? true
             if let requestedUUID { item.id = requestedUUID }
             modelContext.insert(item)
         }
@@ -573,6 +573,7 @@ final class CompanionAPIService {
             setting("SelectedLanguage", "Transcription Language", "string", .string(defaults.string(forKey: "SelectedLanguage") ?? "en"), languageOptions, "Transcription"),
             setting("IsTextFormattingEnabled", "Text Formatting", "boolean", .bool(defaults.bool(forKey: "IsTextFormattingEnabled")), nil, "Transcription"),
             setting("IsVADEnabled", "Voice Activity Detection", "boolean", .bool(defaults.bool(forKey: "IsVADEnabled")), nil, "Transcription"),
+            setting(FinishAndSendSettings.key, "Finish and Send Key", "string", .string(FinishAndSendSettings.selectedKey.rawValue), FinishAndSendKey.allCases.map(\.rawValue), "Output"),
             setting("AppendTrailingSpace", "Append Trailing Space", "boolean", .bool(defaults.bool(forKey: "AppendTrailingSpace")), nil, "Output"),
             setting("restoreClipboardAfterPaste", "Restore Clipboard", "boolean", .bool(defaults.bool(forKey: "restoreClipboardAfterPaste")), nil, "Output"),
             setting("clipboardRestoreDelay", "Clipboard Restore Delay", "number", .number(defaults.double(forKey: "clipboardRestoreDelay")), nil, "Output"),
@@ -671,6 +672,11 @@ final class CompanionAPIService {
             }
             defaults.set(value, forKey: request.key)
             AppLanguagePreference.apply(rawValue: value)
+        case (FinishAndSendSettings.key, .string(let value)):
+            guard FinishAndSendKey(rawValue: value) != nil else {
+                throw CompanionRouteError(422, "invalid_value", "Unknown finish and send key")
+            }
+            defaults.set(value, forKey: request.key)
         case ("RecorderType", .string(let value)):
             guard let style = RecorderPanelStyle(rawValue: value) else {
                 throw CompanionRouteError(422, "invalid_value", "Unknown recorder style")
@@ -864,7 +870,9 @@ final class CompanionAPIService {
                 useSelectedTextContext: mode.useSelectedTextContext,
                 useScreenCapture: mode.useScreenCapture,
                 outputMode: mode.outputMode.rawValue,
-                autoSendKey: mode.autoSendKey.rawValue,
+                // Local API compatibility: omit the removed per-mode option; old apps still expose it.
+                // Revalidate alongside FinishAndSendSettings and the Obsidian mode editor after schema changes.
+                autoSendKey: nil,
                 icon: (try? companionJSONValue(mode.icon)) ?? .null,
                 order: order,
                 appConfigs: (try? companionJSONValue(mode.appConfigs ?? [])) ?? .array([]),
@@ -1096,7 +1104,7 @@ final class CompanionAPIService {
             action("upsertPrompt", "Create or update prompt", [arg("id", "string", false), arg("title", "string"), arg("promptText", "string"), arg("useSystemInstructions", "boolean")]),
             action("deletePrompt", "Delete prompt", [arg("id", "string")]),
             action("createMode", "Create mode", [arg("name", "string")]),
-            action("updateMode", "Update mode", [arg("id", "string"), arg("name", "string", false), arg("isAIEnhancementEnabled", "boolean", false), arg("promptID", "string", false), arg("transcriptionModelName", "string", false), arg("language", "string", false), arg("isTextFormattingEnabled", "boolean", false), arg("enhancementProvider", "string", false, providerOptions), arg("enhancementModel", "string", false), arg("outputMode", "string", false, ModeOutputMode.allCases.map(\.rawValue)), arg("autoSendKey", "string", false, AutoSendKey.allCases.map(\.rawValue)), arg("isEnabled", "boolean", false), arg("isDefault", "boolean", false)]),
+            action("updateMode", "Update mode", [arg("id", "string"), arg("name", "string", false), arg("isAIEnhancementEnabled", "boolean", false), arg("promptID", "string", false), arg("transcriptionModelName", "string", false), arg("language", "string", false), arg("isTextFormattingEnabled", "boolean", false), arg("enhancementProvider", "string", false, providerOptions), arg("enhancementModel", "string", false), arg("outputMode", "string", false, ModeOutputMode.allCases.map(\.rawValue)), arg("isEnabled", "boolean", false), arg("isDefault", "boolean", false)]),
             action("deleteMode", "Delete mode", [arg("id", "string")]),
             action("setModeEnabled", "Enable or disable mode", [arg("id", "string"), arg("enabled", "boolean")]),
             action("setDefaultMode", "Set default mode", [arg("id", "string")]),
@@ -1420,10 +1428,9 @@ final class CompanionAPIService {
                 mode.outputMode = output
             }
             if let value = try optionalString(request.args, "autoSendKey", maximum: 50) {
-                guard let autoSend = AutoSendKey(rawValue: value) else {
-                    throw CompanionRouteError(422, "invalid_action_args", "Unknown auto-send key")
+                guard value == "none" else {
+                    throw CompanionRouteError(409, "mode_auto_send_removed", "VoiceInk 2.21 uses the global Finish and Send setting")
                 }
-                mode.autoSendKey = autoSend
             }
             if let value = optionalBool(request.args, "isEnabled") { mode.isEnabled = value }
             if let value = optionalBool(request.args, "isDefault") { mode.isDefault = value }
@@ -1642,6 +1649,12 @@ final class CompanionAPIService {
         case "testStopSound":
             SoundManager.shared.playStopSound()
         case "upsertMode":
+            // Local compatibility: reject removed automatic sending rather than silently changing its meaning.
+            // Upstream 2.21 moved explicit Finish and Send to a global setting; revalidate on mode schema changes.
+            if case .object(let fields)? = request.args?["mode"],
+                let value = try optionalString(fields, "autoSendKey", maximum: 50), value != "none" {
+                throw CompanionRouteError(409, "mode_auto_send_removed", "VoiceInk 2.21 uses the global Finish and Send setting")
+            }
             let mode = try requiredDecodableArgument(ModeConfig.self, request.args, "mode")
             guard !mode.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 mode.name.count <= 200,
@@ -1820,7 +1833,7 @@ final class CompanionAPIService {
             let url = try inboxURL(named: inboxName, maximumBytes: 1_048_576)
             let data = try Data(contentsOf: url, options: [.mappedIfSafe])
             let backup = try JSONDecoder.companion.decode(BackupFile.self, from: data)
-            try BackupImporter.apply(
+            try await BackupImporter.apply(
                 backup,
                 categories: categories,
                 enhancementService: enhancementService,
@@ -2000,10 +2013,10 @@ final class CompanionAPIService {
             Task { @MainActor [whisperModelManager] in await whisperModelManager.downloadModel(whisper) }
         } else if let fluid = model as? FluidAudioModel {
             try rejectSharedModelMutationInCompanionTest()
-            Task { @MainActor [fluidAudioModelManager] in await fluidAudioModelManager.downloadFluidAudioModel(fluid) }
+            fluidAudioModelManager.startDownload(fluid)
         } else if let transcribe = model as? TranscribeCppModel {
             try rejectSharedModelMutationInCompanionTest()
-            Task { @MainActor in await TranscribeCppModelManager.shared.downloadModel(transcribe) }
+            TranscribeCppModelManager.shared.startDownload(transcribe)
         } else {
             throw CompanionRouteError(409, "model_not_downloadable", "This model is managed by its provider")
         }
@@ -2317,7 +2330,12 @@ final class CompanionAPIService {
                 isTextFormattingEnabled: UserDefaults.standard.bool(forKey: "IsTextFormattingEnabled"),
                 isExperimentalFeaturesEnabled: UserDefaults.standard.bool(forKey: "isExperimentalFeaturesEnabled"),
                 restoreClipboardAfterPaste: UserDefaults.standard.bool(forKey: "restoreClipboardAfterPaste"),
-                clipboardRestoreDelay: UserDefaults.standard.double(forKey: "clipboardRestoreDelay")
+                clipboardRestoreDelay: UserDefaults.standard.double(forKey: "clipboardRestoreDelay"),
+                finishAndSendKey: FinishAndSendSettings.selectedKey.rawValue,
+                isAutoLearnDictionaryEnabled: AutoLearnSettings.isEnabled,
+                autoLearnReviewSchedule: AutoLearnSettings.reviewSchedule.rawValue,
+                autoLearnProvider: AutoLearnSettings.selectedProvider?.rawValue,
+                autoLearnModel: AutoLearnSettings.selectedModel
             )
             : nil
         return BackupFile(

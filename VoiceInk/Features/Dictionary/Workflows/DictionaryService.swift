@@ -101,7 +101,10 @@ enum DictionaryService {
 
         if let wordReplacements = try? context.fetch(FetchDescriptor<WordReplacement>()) {
             var seenReplacements = Set<[String]>()
-            var replacementsByDestination: [String: WordReplacement] = [:]
+            // Ad-hoc local override: Companion still supports disabled replacement rules.
+            // Keep enabled and disabled variants separate when upstream consolidates destinations.
+            // Revalidate with WordReplacementService and Companion persistence tests on update.
+            var replacementsByDestination: [[String]: WordReplacement] = [:]
 
             for wordReplacement in wordReplacements.sorted(by: replacementOrder) {
                 let normalizedOriginal = WordReplacementVariants.serialize(
@@ -119,7 +122,7 @@ enum DictionaryService {
                     normalizedReplacementCount += 1
                 }
 
-                let key = [normalizedOriginal, normalizedDestination]
+                let key = [normalizedOriginal, normalizedDestination, String(wordReplacement.isEnabled)]
                 guard !normalizedOriginal.isEmpty || !normalizedDestination.isEmpty else {
                     continue
                 }
@@ -134,7 +137,7 @@ enum DictionaryService {
                     continue
                 }
 
-                let destinationKey = WordReplacementVariants.destinationKey(for: normalizedDestination)
+                let destinationKey = [WordReplacementVariants.destinationKey(for: normalizedDestination), String(wordReplacement.isEnabled)]
                 if let canonical = replacementsByDestination[destinationKey] {
                     canonical.originalText = WordReplacementVariants.serialize(
                         WordReplacementVariants.parse(canonical.originalText)

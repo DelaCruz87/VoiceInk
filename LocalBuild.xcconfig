@@ -31,3 +31,9 @@ INFOPLIST_KEY_CFBundleDisplayName = VoiceInk-GPL
 // Keep the project reference configurable instead of relying on the removed home directory.
 // Revalidate when the source project or whisper framework location changes.
 VOICEINK_WHISPER_FRAMEWORK_PATH = $(SRCROOT)/../../../+PKM/+Obsidian/+Obsidian Plugins/+VoiceInk Companion/dependencies/whisper.cpp-source/build-apple/whisper.xcframework
+
+// Ad-hoc local override: upstream tag v2.21 retains 2.20 app and 2.13 helper metadata.
+// Match both local bundles to the source release being built. Revalidate against the
+// selected upstream tag and published release whenever this fork is updated.
+MARKETING_VERSION = 2.21
+CURRENT_PROJECT_VERSION = 221

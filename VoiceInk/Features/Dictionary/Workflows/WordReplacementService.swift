@@ -29,9 +29,10 @@ final class WordReplacementService {
     private init() {}
 
     func applyReplacements(to text: String, using context: ModelContext) -> String {
-        // `isEnabled` is retained only for store and CloudKit compatibility.
-        // Replacement rules are intentionally always active.
-        let descriptor = FetchDescriptor<WordReplacement>()
+        // Ad-hoc local override: Companion API v1 and AIgility Dictation preserve per-rule disabling.
+        // Upstream 2.21 always applies rules; retain the existing enabled flag for this integration.
+        // Revalidate filtering, dictionary cleanup, and UI toggles after upstream replacement changes.
+        let descriptor = FetchDescriptor<WordReplacement>(predicate: #Predicate { $0.isEnabled })
 
         let replacements: [WordReplacement]
         do {

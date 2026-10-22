@@ -157,7 +157,7 @@ struct CompanionModeDescriptor: Codable {
     let useSelectedTextContext: Bool
     let useScreenCapture: Bool
     let outputMode: String
-    let autoSendKey: String
+    let autoSendKey: String?
     let icon: CompanionJSONValue
     let order: Int
     let appConfigs: CompanionJSONValue

@@ -237,6 +237,46 @@ match = next(x for x in items if x.get("transcriptionModelName") == "Companion F
 assert match["text"] == "CompanionSyntheticReplacement"
 PY
 
+# Verify that legacy disabled rules still have an effect, and that the new global
+# finish/send setting and backup fields round-trip without changing mode behavior.
+/usr/bin/python3 - "$endpoint" "$token" "$audio_path" <<'PY'
+import json, sys, time, urllib.request
+base, token, audio = sys.argv[1:]
+def call(path, body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(base + '/v1/' + path, data=data, headers={
+        'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+    return json.load(urllib.request.urlopen(req, timeout=15))
+dictionary = call('dictionary')
+item = next(x for x in dictionary['replacements'] if x['originalText'] == 'CompanionSyntheticOriginal')
+call('dictionary', {'expectedRevision': dictionary['revision'], 'operations': [{
+    'kind': 'replacement', 'action': 'upsert', 'id': item['id'],
+    'originalText': item['originalText'], 'replacementText': item['replacementText'], 'isEnabled': False}]})
+job = call('actions', {'action': 'transcribeAudio', 'args': {'path': audio}})['id']
+for _ in range(200):
+    state = call('state')
+    result = next((x for x in state['audioTranscription']['items'] if x['id'] == job), None)
+    if result and result['status'] == 'completed': break
+    assert not result or result['status'] != 'failed', result
+    time.sleep(.1)
+else: raise AssertionError('Disabled replacement transcription timed out')
+history = call('history?offset=0&limit=20')
+entry = next(x for x in history['items'] if x['id'] == result['transcriptionID'])
+assert entry['text'] == 'CompanionSyntheticOriginal', 'Disabled replacement was still applied'
+setting = call('settings', {'key': 'finishAndSendKey', 'value': 'commandEnter'})
+assert setting['value'] == 'commandEnter'
+capabilities = call('capabilities')
+update = next(x for x in capabilities['actionDescriptors'] if x['name'] == 'updateMode')
+assert not any(x['name'] == 'autoSendKey' for x in update['arguments'])
+assert all('autoSendKey' not in mode for mode in state['modes'])
+export = call('actions', {'action': 'exportBackup', 'args': {'categories': ['general']}})
+backup = call('artifacts/' + export['id'])
+general = backup['generalSettings']
+assert general['finishAndSendKey'] == 'commandEnter'
+assert 'isAutoLearnDictionaryEnabled' in general and 'autoLearnReviewSchedule' in general
+print('PASS disabled replacement semantics, Finish and Send, and current general backup fields')
+PY
+
 curl --fail --silent --request POST --header 'Content-Type: application/json' \
     --header "Authorization: Bearer $token" \
     --data '{"original":"CompanionSyntheticOriginal","corrected":"CompanionSyntheticReplacement"}' \
@@ -264,6 +304,15 @@ assert setting["value"] is True
 assert state["metadata"]["activeTranscriptionModelID"] == sys.argv[2]
 assert state["metadata"]["historyCount"] >= 2
 PY
+
+curl --fail --silent --header "Authorization: Bearer $token" "$endpoint/v1/dictionary" >"$scratch/relaunch-dictionary.json"
+/usr/bin/python3 - "$scratch/relaunch-dictionary.json" <<'PYTEST'
+import json, sys
+rules = {x["id"]: x for x in json.load(open(sys.argv[1]))["replacements"]}
+assert rules["E2E00000-0000-4000-8000-000000000002"]["isEnabled"] is False
+assert rules["E2E00000-0000-4000-8000-000000000007"]["isEnabled"] is True
+assert rules["E2E00000-0000-4000-8000-000000000002"]["originalText"] == "CompanionSyntheticOriginal"
+PYTEST
 
 [[ -z "$live_pid" ]] || kill -0 "$live_pid"
 source_preferences_after=$(stat -f '%m' "$source_preferences" 2>/dev/null || print missing)

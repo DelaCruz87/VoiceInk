@@ -163,11 +163,23 @@ enum CompanionFixtureSeeder {
             let replacement = WordReplacement(
                 originalText: "CompanionSyntheticOriginal",
                 replacementText: "CompanionSyntheticReplacement",
-                dateAdded: Date(timeIntervalSince1970: 1_759_320_001),
-                isEnabled: false
+                dateAdded: Date(timeIntervalSince1970: 1_759_320_001)
             )
+            replacement.isEnabled = false
             replacement.id = replacementID
             modelContext.insert(replacement)
+        }
+
+        // Exercise cleanup of equal destinations without re-enabling a disabled Companion rule.
+        let enabledVariantID = UUID(uuidString: "E2E00000-0000-4000-8000-000000000007")!
+        if !replacements.contains(where: { $0.id == enabledVariantID }) {
+            let enabledVariant = WordReplacement(
+                originalText: "CompanionEnabledVariant",
+                replacementText: "CompanionSyntheticReplacement",
+                dateAdded: Date(timeIntervalSince1970: 1_759_320_002)
+            )
+            enabledVariant.id = enabledVariantID
+            modelContext.insert(enabledVariant)
         }
 
         let metrics = try modelContext.fetch(FetchDescriptor<SessionMetric>())
