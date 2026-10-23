@@ -4,6 +4,8 @@ WHISPER_CPP_DIR := $(DEPS_DIR)/whisper.cpp
 FRAMEWORK_PATH := $(WHISPER_CPP_DIR)/build-apple/whisper.xcframework
 LOCAL_DERIVED_DATA := $(CURDIR)/.local-build
 LOCAL_CODESIGN_IDENTITY ?=
+# Local GPL override requested by Eme on 2026-10-23: version the exported bundle,
+# not PRODUCT_NAME. Revalidate if upstream changes local version metadata or packaging.
 LOCAL_MARKETING_VERSION := $(shell awk '/^MARKETING_VERSION = / { print $$3; exit }' LocalBuild.xcconfig)
 LOCAL_APP_NAME := VoiceInk-GPL-$(LOCAL_MARKETING_VERSION)
 RUN_APP_NAME ?= $(LOCAL_APP_NAME)
@@ -48,8 +50,6 @@ setup: whisper
 
 build: setup
 	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug CODE_SIGN_IDENTITY="" \
-		-skipPackagePluginValidation \
-		-skipMacroValidation \
 		build
 
 # Build locally with stable Apple Development signing when available.
