@@ -4,7 +4,9 @@ WHISPER_CPP_DIR := $(DEPS_DIR)/whisper.cpp
 FRAMEWORK_PATH := $(WHISPER_CPP_DIR)/build-apple/whisper.xcframework
 LOCAL_DERIVED_DATA := $(CURDIR)/.local-build
 LOCAL_CODESIGN_IDENTITY ?=
-RUN_APP_NAME ?= VoiceInk
+LOCAL_MARKETING_VERSION := $(shell awk '/^MARKETING_VERSION = / { print $$3; exit }' LocalBuild.xcconfig)
+LOCAL_APP_NAME := VoiceInk-GPL-$(LOCAL_MARKETING_VERSION)
+RUN_APP_NAME ?= $(LOCAL_APP_NAME)
 
 .PHONY: all clean whisper setup build local check healthcheck help dev run release release-setup
 
@@ -81,18 +83,20 @@ local: check setup
 		DEVELOPMENT_TEAM="" \
 		CODE_SIGN_ENTITLEMENTS="$(CURDIR)/VoiceInk/VoiceInk.local.entitlements" \
 		SWIFT_ACTIVE_COMPILATION_CONDITIONS='$$(inherited) LOCAL_BUILD' \
-		-skipPackagePluginValidation \
-		-skipMacroValidation \
 		build
 	@APP_PATH="$(LOCAL_DERIVED_DATA)/Build/Products/Release/VoiceInk.app" && \
 	if [ -d "$$APP_PATH" ]; then \
-		echo "Copying VoiceInk.app to ~/Downloads..."; \
-		rm -rf "$$HOME/Downloads/VoiceInk.app"; \
-		ditto "$$APP_PATH" "$$HOME/Downloads/VoiceInk.app"; \
-		xattr -cr "$$HOME/Downloads/VoiceInk.app"; \
+		APP_VERSION=$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$$APP_PATH/Contents/Info.plist") && \
+		[ "$$APP_VERSION" = "$(LOCAL_MARKETING_VERSION)" ] || { echo "Error: Built app version does not match LocalBuild.xcconfig"; exit 1; }; \
+		DEST_PATH="$$HOME/Downloads/$(LOCAL_APP_NAME).app"; \
+		echo "Copying $(LOCAL_APP_NAME).app to ~/Downloads..."; \
+		rm -rf "$$DEST_PATH"; \
+		ditto "$$APP_PATH" "$$DEST_PATH" && \
+		xattr -cr "$$DEST_PATH" && \
+		codesign --verify --deep --strict "$$DEST_PATH" || exit 1; \
 		echo ""; \
-		echo "Build complete! App saved to: ~/Downloads/VoiceInk.app"; \
-		echo "Run with: open ~/Downloads/VoiceInk.app"; \
+		echo "Build complete! App saved to: ~/Downloads/$(LOCAL_APP_NAME).app"; \
+		echo "Run with: open ~/Downloads/$(LOCAL_APP_NAME).app"; \
 		echo ""; \
 		echo "Limitations of local builds:"; \
 		echo "  - No iCloud dictionary sync"; \

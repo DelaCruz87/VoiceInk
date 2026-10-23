@@ -25,7 +25,10 @@ VOICEINK_LOCAL_BUNDLE_ID_DEFAULT = com.prakashjoshipax.VoiceInk.GPL
 VOICEINK_LOCAL_BUNDLE_ID_VoiceInk = com.prakashjoshipax.VoiceInk.GPL
 VOICEINK_LOCAL_BUNDLE_ID_VoiceInkRefineXPC = com.prakashjoshipax.VoiceInk.GPL.RefineXPC
 PRODUCT_BUNDLE_IDENTIFIER = $(VOICEINK_LOCAL_BUNDLE_ID_$(TARGET_NAME:identifier):default=$(VOICEINK_LOCAL_BUNDLE_ID_DEFAULT))
-INFOPLIST_KEY_CFBundleDisplayName = VoiceInk-GPL
+// Versioned user-visible name requested by Eme on 2026-10-23. Keep PRODUCT_NAME upstream
+// so Swift Package products and the executable remain compatible. Revalidate this
+// override if upstream changes local bundle metadata or target naming.
+INFOPLIST_KEY_CFBundleDisplayName = VoiceInk-GPL-$(MARKETING_VERSION)
 
 // Ad-hoc local override: dependencies moved into the ENSO companion project on 2026-10-22.
 // Keep the project reference configurable instead of relying on the removed home directory.
